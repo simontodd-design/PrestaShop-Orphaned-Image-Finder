@@ -4,6 +4,23 @@ A simple, single-file tool to find and remove orphaned images from your PrestaSh
 
 Over time, PrestaShop stores accumulate unused images from deleted products, old CMS content, and module changes. This tool helps you identify and safely remove them to reclaim disk space.
 
+## Version
+
+**Current: 1.1.0**
+
+### Changelog
+
+**1.1.0**
+- Full table scanning (no more sampling) - all rows are now checked
+- Batched database processing to handle large tables without timeouts
+- Improved error handling - scan continues even if individual tables fail
+- Scan log now stays visible after completion for review
+- Better table filtering - skips consent, tracking, and payment log tables that won't contain images
+- Increased memory and timeout limits for larger stores
+
+**1.0.0**
+- Initial release
+
 ## Features
 
 - **Single PHP file** - just upload and run, no installation required
