@@ -1,14 +1,14 @@
 <?php
 /**
  * ============================================================================
- * PrestaShop Image Cleanup Tool v1.0.0
+ * PrestaShop Image Cleanup Tool v1.1.0
  * ============================================================================
  * 
  * A free, open-source utility for identifying and removing orphaned images
  * from PrestaShop installations to reclaim disk space.
  * 
  * @package     PrestaShop Image Cleanup
- * @version     1.0.0
+ * @version     1.1.0
  * @author      Simon Todd
  * @copyright   2024 Simon Todd
  * @license     MIT License
@@ -48,13 +48,23 @@
  */
 
 session_start();
-set_time_limit(300); // 5 minutes per request
-ini_set('memory_limit', '512M');
+set_time_limit(600); // 10 minutes per request
+ini_set('memory_limit', '768M');
 ini_set('display_errors', 0);
 error_reporting(0);
 
 // Custom error handler for AJAX requests - output JSON instead of HTML
 function jsonErrorHandler($errno, $errstr, $errfile, $errline) {
+    // Respect @ error suppression operator
+    if (!(error_reporting() & $errno)) {
+        return false;
+    }
+    
+    // Only handle fatal-ish errors, let warnings pass
+    if (!in_array($errno, [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR])) {
+        return false;
+    }
+    
     if (isset($_POST['action'])) {
         // Clean any previous output
         while (ob_get_level()) ob_end_clean();
@@ -108,10 +118,18 @@ register_shutdown_function('jsonShutdownHandler');
 define('TOOL_PASSWORD', 'simontodd');  // <-- CHANGE THIS TO A SECURE PASSWORD!
 define('SESSION_KEY', 'ps_cleanup_auth_st');
 define('CHUNK_SIZE', 500);
-define('TOOL_VERSION', '1.0.0');
+define('TOOL_VERSION', '1.1.0');
 
 // Logo as base64 (embedded)
 define('LOGO_SVG', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595.28 841.89"><defs><linearGradient id="lg1" x1="-225.39" y1="933.09" x2="717.42" y2="-9.72" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#df1b67"/><stop offset=".54" stop-color="#ee3e79"/><stop offset="1" stop-color="#ea507f"/></linearGradient></defs><path fill="url(#lg1)" fill-rule="evenodd" d="M-6.73,319.37c4.77-38.72,33.31-73.18,75.35-98.27,38.66-23.07,84.3-40.79,132.59-50.88,112.54-23.44,247.73-24.86,329.76-45.85,114.13-29.15,124.39-110.08,124.39-110.08C751.43,329.77,105.26,193.16,134.5,364.49c7.78,45.6,77.5,93.64,258.5,98.97h0c-107.55,9.93-276.01,28.36-354.93-41-29.33-25.76-49.88-61.84-44.8-103.08ZM556.74,398.14c-78.91-69.36-247.38-50.93-354.93-41h0c180.99,5.33,250.72,53.37,258.5,98.97,29.24,171.32-616.93,34.71-520.87,350.19,0,0,10.26-80.93,124.39-110.08,82.03-20.99,217.22-22.41,329.76-45.85,48.29-10.09,93.94-27.82,132.59-50.88,42.05-25.09,70.58-59.55,75.35-98.27,5.08-41.24-15.47-77.32-44.8-103.08Z"/></svg>');
+
+// Handle reset request - clears all session data and redirects
+if (isset($_GET['reset'])) {
+    $_SESSION['scan_data'] = null;
+    $_SESSION['db_scan_tables'] = null;
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    exit;
+}
 
 // Authentication check
 $authenticated = isset($_SESSION[SESSION_KEY]) && $_SESSION[SESSION_KEY] === true;
@@ -205,6 +223,7 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
         if (($_POST['password'] ?? '') === TOOL_PASSWORD) {
             $_SESSION[SESSION_KEY] = true;
             $_SESSION['scan_data'] = null;
+            $_SESSION['db_scan_tables'] = null;
             $_SESSION['disclaimer_accepted'] = false;
             echo json_encode(['success' => true]);
         } else {
@@ -557,27 +576,38 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
                 
                 // Check for serialized PHP data
                 if (strpos($content, 's:') !== false || strpos($content, 'a:') !== false) {
-                    $unserialized = @unserialize($content);
-                    if ($unserialized !== false && is_array($unserialized)) {
-                        array_walk_recursive($unserialized, function($value) use ($addRef, $source, &$count) {
-                            if (is_string($value) && preg_match('/\.(jpg|jpeg|png|gif|webp|svg|avif|ico)$/i', $value)) {
-                                $addRef($value, $source . ' (serialized)');
-                                $count++;
+                    // Only attempt unserialize if it looks like valid serialized data
+                    if (preg_match('/^[aOsbiN]:[0-9]+/', $content)) {
+                        try {
+                            $unserialized = @unserialize($content, ['allowed_classes' => false]);
+                            if ($unserialized !== false && is_array($unserialized)) {
+                                array_walk_recursive($unserialized, function($value) use ($addRef, $source, &$count) {
+                                    if (is_string($value) && preg_match('/\.(jpg|jpeg|png|gif|webp|svg|avif|ico)$/i', $value)) {
+                                        $addRef($value, $source . ' (serialized)');
+                                        $count++;
+                                    }
+                                });
                             }
-                        });
+                        } catch (Throwable $e) {
+                            // Silently skip invalid serialized data
+                        }
                     }
                 }
                 
                 // Check for JSON data
                 if (strpos($content, '{') !== false || strpos($content, '[') !== false) {
-                    $decoded = @json_decode($content, true);
-                    if (is_array($decoded)) {
-                        array_walk_recursive($decoded, function($value) use ($addRef, $source, &$count) {
-                            if (is_string($value) && preg_match('/\.(jpg|jpeg|png|gif|webp|svg|avif|ico)$/i', $value)) {
-                                $addRef($value, $source . ' (JSON)');
-                                $count++;
-                            }
-                        });
+                    try {
+                        $decoded = @json_decode($content, true);
+                        if (is_array($decoded)) {
+                            array_walk_recursive($decoded, function($value) use ($addRef, $source, &$count) {
+                                if (is_string($value) && preg_match('/\.(jpg|jpeg|png|gif|webp|svg|avif|ico)$/i', $value)) {
+                                    $addRef($value, $source . ' (JSON)');
+                                    $count++;
+                                }
+                            });
+                        }
+                    } catch (Throwable $e) {
+                        // Silently skip invalid JSON
                     }
                 }
                 
@@ -602,14 +632,11 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
                     $allTables = $stmt->fetchAll(PDO::FETCH_COLUMN);
                     
                     foreach ($allTables as $table) {
-                        // Skip certain system/log tables that won't have useful image refs
+                        // Only skip tables that definitely won't have image references
                         $tableName = str_replace($prefix, '', $table);
-                        if (preg_match('/^(log|cart|order_detail|order_history|connections|guest|pagenotfound|statssearch|sekeyword|compare|mail|message_readed|customer_session|stock_mvt|specific_price|search_index|search_word|layered_|smarty_cache|smarty_lazy)/', $tableName)) {
-                            continue;
-                        }
                         
-                        // Skip revision/history tables (huge data, minimal image value)
-                        if (preg_match('/(revision|history|backup|cache|queue|cron|log_)/', $tableName)) {
+                        // Skip core system tables that are purely numeric/transactional
+                        if (preg_match('/^(cart_product|order_detail|order_payment|stock_mvt|connections|connections_source|guest|pagenotfound|sekeyword|statssearch|search_index|search_word|compare|customer_session|message_readed)$/', $tableName)) {
                             continue;
                         }
                         
@@ -661,7 +688,7 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
                 }
                 
                 // Split into chunks of 5 tables each
-                $_SESSION['db_scan_tables'] = array_chunk($scannableTables, 3);
+                $_SESSION['db_scan_tables'] = array_chunk($scannableTables, 2);
                 $_SESSION['db_scan_total_tables'] = count($scannableTables);
             }
             
@@ -702,51 +729,82 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
                 try {
                     $colList = implode(', ', array_map(function($c) { return "`$c`"; }, $validCols));
                     
-                    // Get row count first to handle large tables
+                    // Get row count first
                     $countStmt = $pdo->query("SELECT COUNT(*) FROM `{$target['table']}`");
                     $totalRows = $countStmt->fetchColumn();
                     
-                    // For very large tables, process in batches
-                    $maxRowsPerTable = 5000; // Limit per table to prevent memory issues
-                    $batchSize = 500;
-                    $rowCount = 0;
-                    $refCount = 0;
-                    
-                    if ($totalRows > $maxRowsPerTable) {
-                        // Sample the table instead of reading everything
-                        $sql = "SELECT $colList FROM `{$target['table']}` LIMIT $maxRowsPerTable";
+                    // For large tables, do a quick pre-scan to check if there's ANY image content
+                    // This avoids wasting time on huge tables that have no image references
+                    if ($totalRows > 5000) {
+                        $sampleSql = "SELECT $colList FROM `{$target['table']}` LIMIT 100";
+                        $sampleStmt = $pdo->query($sampleSql);
+                        $hasImageContent = false;
+                        
+                        while ($sampleRow = $sampleStmt->fetch(PDO::FETCH_ASSOC)) {
+                            foreach ($sampleRow as $value) {
+                                if (!empty($value) && is_string($value)) {
+                                    // Quick check for image-related content
+                                    if (preg_match('/\.(jpg|jpeg|png|gif|webp|svg|ico)|\/img\/|\/upload\/|<img|url\s*\(/i', $value)) {
+                                        $hasImageContent = true;
+                                        break 2;
+                                    }
+                                }
+                            }
+                        }
+                        unset($sampleStmt);
+                        
+                        if (!$hasImageContent) {
+                            $chunkLog[] = [
+                                'type' => 'info',
+                                'source' => $target['source'],
+                                'message' => "Skipped ({$totalRows} rows) - no image content detected in sample",
+                            ];
+                            continue;
+                        }
+                        
                         $chunkLog[] = [
-                            'type' => 'warning',
+                            'type' => 'info',
                             'source' => $target['source'],
-                            'message' => "Large table ({$totalRows} rows) - sampling first {$maxRowsPerTable}",
+                            'message' => "Large table ({$totalRows} rows) - scanning in batches",
                         ];
-                    } else {
-                        $sql = "SELECT $colList FROM `{$target['table']}`";
                     }
                     
-                    $stmt = $pdo->query($sql);
-                    $stmt->setFetchMode(PDO::FETCH_ASSOC);
+                    $batchSize = 1000;
+                    $rowCount = 0;
+                    $refCount = 0;
+                    $offset = 0;
                     
-                    while ($row = $stmt->fetch()) {
-                        $rowCount++;
-                        foreach ($row as $value) {
-                            if (!empty($value) && is_string($value) && strlen($value) > 3) {
-                                // Limit content length to prevent memory issues
-                                if (strlen($value) > 500000) {
-                                    $value = substr($value, 0, 500000);
+                    // Process ALL rows in batches
+                    while ($offset < $totalRows) {
+                        $sql = "SELECT $colList FROM `{$target['table']}` LIMIT $batchSize OFFSET $offset";
+                        $stmt = $pdo->query($sql);
+                        $stmt->setFetchMode(PDO::FETCH_ASSOC);
+                        
+                        $batchCount = 0;
+                        while ($row = $stmt->fetch()) {
+                            $rowCount++;
+                            $batchCount++;
+                            foreach ($row as $value) {
+                                if (!empty($value) && is_string($value) && strlen($value) > 3) {
+                                    // Limit content length to prevent memory issues
+                                    if (strlen($value) > 500000) {
+                                        $value = substr($value, 0, 500000);
+                                    }
+                                    $refCount += $scanContent($value, $target['source']);
                                 }
-                                $refCount += $scanContent($value, $target['source']);
                             }
                         }
                         
-                        // Free memory periodically
-                        if ($rowCount % $batchSize === 0) {
-                            gc_collect_cycles();
+                        unset($stmt);
+                        gc_collect_cycles();
+                        
+                        $offset += $batchSize;
+                        
+                        // If we got fewer rows than batch size, we're done
+                        if ($batchCount < $batchSize) {
+                            break;
                         }
                     }
-                    
-                    unset($stmt); // Free statement memory
-                    gc_collect_cycles();
                     
                     $stats['tablesScanned']++;
                     $chunkRefs += $refCount;
@@ -2360,7 +2418,9 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
                                     <div class="progress-fill animated" id="scanProgressBar" style="width: 0%"></div>
                                 </div>
                             </div>
-                            
+                        </div>
+                        
+                        <div id="scanLogContainer" class="hidden">
                             <div class="log-console mt-4" id="scanLog"></div>
                         </div>
                         
@@ -2750,6 +2810,7 @@ async function startFullScan() {
     
     document.getElementById('scanControls').classList.add('hidden');
     document.getElementById('scanRunning').classList.remove('hidden');
+    document.getElementById('scanLogContainer').classList.remove('hidden');
     document.getElementById('scanComplete').classList.add('hidden');
     
     scanLogEntries = [];
