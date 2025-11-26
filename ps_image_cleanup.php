@@ -12,7 +12,7 @@
  * @author      Simon Todd
  * @copyright   2024 Simon Todd
  * @license     MIT License
- * @link        https://github.com/simontodd
+ * @link        https://github.com/simontodd-design
  * 
  * ============================================================================
  * DISCLAIMER
@@ -42,7 +42,7 @@
  * 
  * Website: https://simontodd.dev
  * Email:   hello@simontodd.dev
- * GitHub:  https://github.com/simontodd
+ * GitHub:  https://github.com/simontodd-design
  * 
  * ============================================================================
  */
@@ -2456,7 +2456,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
                         <ul style="margin: 16px 0; padding-left: 20px;">
                             <li><strong>Website:</strong> <a href="https://simontodd.dev" target="_blank" style="color: var(--primary);">simontodd.dev</a></li>
                             <li><strong>Email:</strong> <a href="mailto:hello@simontodd.dev" style="color: var(--primary);">hello@simontodd.dev</a></li>
-                            <li><strong>GitHub:</strong> <a href="https://github.com/simontodd" target="_blank" style="color: var(--primary);">github.com/simontodd</a></li>
+                            <li><strong>GitHub:</strong> <a href="https://github.com/simontodd-design" target="_blank" style="color: var(--primary);">github.com/simontodd</a></li>
                         </ul>
                     </div>
                 </div>
